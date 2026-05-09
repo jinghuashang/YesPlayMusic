@@ -7,16 +7,19 @@
       <div class="title">{{ $t('login.loginText') }}</div>
       <div class="section-2">
         <div v-show="mode === 'phone'" class="input-box">
-          <div class="container" :class="{ active: inputFocus === 'phone' }">
+          <div
+            class="container"
+            :class="{ active: ['phone', 'countryCode'].includes(inputFocus) }"
+          >
             <svg-icon icon-class="mobile" />
             <div class="inputs">
               <input
                 id="countryCode"
                 v-model="countryCode"
                 :placeholder="
-                  inputFocus === 'phone' ? '' : $t('login.countryCode')
+                  inputFocus === 'countryCode' ? '' : $t('login.countryCode')
                 "
-                @focus="inputFocus = 'phone'"
+                @focus="inputFocus = 'countryCode'"
                 @blur="inputFocus = ''"
                 @keyup.enter="login"
               />
@@ -97,6 +100,10 @@
         <span v-show="mode !== 'qrCode'">|</span>
         <a v-show="mode !== 'qrCode'" @click="changeMode('qrCode')">
           二维码登录
+        </a>
+        <span v-show="mode !== 'qrCode'">|</span>
+        <a v-show="mode !== 'qrCode'" @click="cookieLogin('qrCode')">
+          Cookie登录
         </a>
       </div>
       <div
@@ -181,6 +188,29 @@ export default {
       }
       return true;
     },
+    cookieLogin() {
+      const musicU = prompt('请输入您的 MUSIC_U 值：');
+      if (musicU) {
+        const expiresDate = new Date();
+        expiresDate.setTime(
+          expiresDate.getTime() + 100 * 365 * 24 * 60 * 60 * 1000
+        );
+        const expires = `expires=${expiresDate.toUTCString()}`;
+        setCookies(
+          `MUSIC_U=${encodeURIComponent(
+            musicU
+          )}; ${expires}; path=/; Secure; SameSite=Lax`
+        );
+        this.updateData({ key: 'loginMode', value: 'account' });
+        this.$store.dispatch('fetchUserProfile').then(() => {
+          this.$store.dispatch('fetchLikedPlaylist').then(() => {
+            this.$router.push({ path: '/library' });
+          });
+        });
+      } else {
+        alert('MUSIC_U 值不能为空！');
+      }
+    },
     login() {
       if (this.mode === 'phone') {
         this.processing = this.validatePhone();
@@ -218,6 +248,7 @@ export default {
       }
       if (data.code === 200) {
         setCookies(data.cookie);
+
         this.updateData({ key: 'loginMode', value: 'account' });
         this.$store.dispatch('fetchUserProfile').then(() => {
           this.$store.dispatch('fetchLikedPlaylist').then(() => {
@@ -261,6 +292,8 @@ export default {
       });
     },
     checkQrCodeLogin() {
+      // 清除二维码检测
+      clearInterval(this.qrCodeCheckInterval);
       this.qrCodeCheckInterval = setInterval(() => {
         if (this.qrCodeKey === '') return;
         loginQrCodeCheck(this.qrCodeKey).then(result => {

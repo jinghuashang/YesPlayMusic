@@ -4,7 +4,13 @@ import { getArtist } from '@/api/artist';
 import { trackScrobble, trackUpdateNowPlaying } from '@/api/lastfm';
 import { fmTrash, personalFM } from '@/api/others';
 import { getPlaylistDetail, intelligencePlaylist } from '@/api/playlist';
-import { unblock, getMP3, getTrackDetail, scrobble } from '@/api/track';
+import {
+  getLyric,
+  unblock,
+  getMP3,
+  getTrackDetail,
+  scrobble,
+} from '@/api/track';
 import store from '@/store';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { cacheTrackSource, getTrackSource } from '@/utils/db';
@@ -15,6 +21,7 @@ import { decode as base642Buffer } from '@/utils/base64';
 
 const PLAY_PAUSE_FADE_DURATION = 200;
 
+const INDEX_IN_PLAY_NEXT = -1;
 /**
  * @readonly
  * @enum {string}
@@ -129,6 +136,8 @@ export default class {
     if (shuffle) {
       this._shuffleTheList();
     }
+    // 同步当前歌曲在列表中的下标
+    this.current = this.list.indexOf(this.currentTrackID);
   }
   get reversed() {
     return this._reversed;
@@ -200,6 +209,9 @@ export default class {
   set progress(value) {
     if (this._howler) {
       this._howler.seek(value);
+      if (isCreateMpris) {
+        ipcRenderer?.send('seeked', this._howler.seek());
+      }
     }
   }
   get isCurrentTrackLiked() {
@@ -256,8 +268,8 @@ export default class {
     const next = this._reversed ? this.current - 1 : this.current + 1;
 
     if (this._playNextList.length > 0) {
-      let trackID = this._playNextList.shift();
-      return [trackID, this.current];
+      let trackID = this._playNextList[0];
+      return [trackID, INDEX_IN_PLAY_NEXT];
     }
     // 循环模式开启，则重新播放当前模式下的相对的下一首
     if (this.repeatMode === 'on') {
@@ -324,11 +336,13 @@ export default class {
     this._howler = new Howl({
       src: [source],
       html5: true,
+      crossOrigin: 'anonymous',
       preload: true,
       format: ['mp3', 'flac'],
       onend: () => {
         this._nextTrackCallback();
       },
+      onload: () => {},
     });
 
     this._howler.on('loaderror', (_, errCode) => {
@@ -383,7 +397,8 @@ export default class {
     });
   }
   _getAudioSourceFromNetease(track) {
-    if (isAccountLoggedIn()) {
+    if (true) {
+      // if (isAccountLoggedIn()) { //不需要只需要登录的情况（个人修改）
       return getMP3(track.id).then(result => {
         if (!result.data[0]) return null;
         if (!result.data[0].url) return null;
@@ -470,16 +485,25 @@ export default class {
     return this._getAudioSourceBlobURL(buffer);
   }
   _getAudioSource(track) {
-    return this._getAudioSourceFromCache(String(track.id))
-      .then(source => {
-        return source ?? this._getAudioSourceFromNetease(track);
-      })
-      .then(source => {
-        if (!track.playable) {
-          return this._getAudioSourceFromUnblockMusic(track) ?? source;
-        }
-        return source ?? this._getAudioSourceFromUnblockMusic(track);
-      });
+    return this._getAudioSourceFromCache(String(track.id)).then(source => {
+      console.debug(
+        `[debug][Player.js] Get Cache 👉 ${track.name} ,url:${source}`
+      );
+      return (
+        source ??
+        this._getAudioSourceFromNetease(track).then(source => {
+          let finalSource =
+            source ?? this._getAudioSourceFromUnblockMusic(track);
+          console.debug(
+            `[debug][Player.js] Get Mp3 From NeteaseAPI/Unblock 👉 ${track.name} ,url:${source}`
+          );
+          if (store.state.settings.automaticallyCacheSongs) {
+            cacheTrackSource(track, source, 128000);
+          }
+          return finalSource;
+        })
+      );
+    });
   }
   _replaceCurrentTrack(
     id,
@@ -630,12 +654,34 @@ export default class {
       ],
       length: this.currentTrackDuration,
       trackId: this.current,
+      url: '/trackid/' + track.id,
     };
 
     navigator.mediaSession.metadata = new window.MediaMetadata(metadata);
     if (isCreateMpris) {
-      ipcRenderer?.send('metadata', metadata);
+      this._updateMprisState(track, metadata);
     }
+  }
+  // OSDLyrics 会检测 Mpris 状态并寻找对应歌词文件，所以要在更新 Mpris 状态之前保证歌词下载完成
+  async _updateMprisState(track, metadata) {
+    if (!store.state.settings.enableOsdlyricsSupport) {
+      return ipcRenderer?.send('metadata', metadata);
+    }
+
+    let lyricContent = await getLyric(track.id);
+
+    if (!lyricContent.lrc || !lyricContent.lrc.lyric) {
+      return ipcRenderer?.send('metadata', metadata);
+    }
+
+    ipcRenderer.send('sendLyrics', {
+      track,
+      lyrics: lyricContent.lrc.lyric,
+    });
+
+    ipcRenderer.on('saveLyricFinished', () => {
+      ipcRenderer?.send('metadata', metadata);
+    });
   }
   _updateMediaSessionPositionState() {
     if ('mediaSession' in navigator === false) {
@@ -718,7 +764,12 @@ export default class {
       this._setPlaying(false);
       return false;
     }
-    this.current = index;
+    let next = index;
+    if (index === INDEX_IN_PLAY_NEXT) {
+      this._playNextList.shift();
+      next = this.current;
+    }
+    this.current = next;
     this._replaceCurrentTrack(trackID);
     return true;
   }
@@ -804,6 +855,9 @@ export default class {
     this._howler?.once('play', () => {
       this._howler?.fade(0, this.volume, PLAY_PAUSE_FADE_DURATION);
       this.nowMp3Url = this._howler._src;
+      // 播放时确保开启player.
+      // 避免因"忘记设置"导致在播放时播放器不显示的Bug
+      this._enabled = true;
       this._setPlaying(true);
       if (this._currentTrack.name) {
         setTitle(this._currentTrack);
@@ -827,11 +881,14 @@ export default class {
       this.play();
     }
   }
-  seek(time = null) {
+  seek(time = null, sendMpris = true) {
+    if (isCreateMpris && sendMpris && time) {
+      ipcRenderer?.send('seeked', time);
+    }
     if (time !== null) {
       this._howler?.seek(time);
       if (this._playing)
-        this._playDiscordPresence(this._currentTrack, this.seek());
+        this._playDiscordPresence(this._currentTrack, this.seek(null, false));
     }
     return this._howler === null ? 0 : this._howler.seek();
   }
@@ -856,7 +913,6 @@ export default class {
     autoPlayTrackID = 'first'
   ) {
     this._isPersonalFM = false;
-    if (!this._enabled) this._enabled = true;
     console.log(trackIDs);
     this.list = trackIDs;
     this.current = 0;
@@ -868,7 +924,7 @@ export default class {
     if (autoPlayTrackID === 'first') {
       this._replaceCurrentTrack(this.list[0]);
     } else {
-      this.current = trackIDs.indexOf(autoPlayTrackID);
+      this.current = this.list.indexOf(autoPlayTrackID);
       this._replaceCurrentTrack(autoPlayTrackID);
     }
   }
@@ -923,7 +979,6 @@ export default class {
   }
   playPersonalFM() {
     this._isPersonalFM = true;
-    if (!this._enabled) this._enabled = true;
     if (this.currentTrackID !== this._personalFMTrack.id) {
       this._replaceCurrentTrack(this._personalFMTrack.id, true);
     } else {
@@ -975,5 +1030,40 @@ export default class {
   }
   removeTrackFromQueue(index) {
     this._playNextList.splice(index, 1);
+  }
+  loadLocalMusic() {
+    /* eslint-disable */
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.style.display = 'none';
+    let that = this;
+    fileInput.addEventListener(
+      'change',
+      function (event) {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function (event) {
+            const arrayBuffer = event.target.result;
+            const blob = new Blob([arrayBuffer]);
+            const url = URL.createObjectURL(blob);
+            jsmediatags.read(file, {
+              onSuccess: function (tag) {
+                console.log(tag); // 音乐名称E
+              },
+              onError: function (error) {
+                console.log(':(', error.type, error.info);
+                console.log(file.name.split('.')[0]);
+              },
+            });
+            that._playAudioSource(url, true);
+          };
+
+          reader.readAsArrayBuffer(file);
+        }
+      },
+      false
+    );
+    fileInput.click();
   }
 }

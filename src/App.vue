@@ -40,7 +40,7 @@ import { ipcRenderer } from './electron/ipcRenderer';
 import { isAccountLoggedIn, isLooseLoggedIn } from '@/utils/auth';
 import Lyrics from './views/lyrics.vue';
 import { mapState } from 'vuex';
-
+import { flexiSite } from '@/api/others';
 export default {
   name: 'App',
   components: {
@@ -82,9 +82,20 @@ export default {
     },
   },
   created() {
+    // 创建音频上下文
     if (this.isElectron) ipcRenderer(this);
     window.addEventListener('keydown', this.handleKeydown);
     this.fetchData();
+    flexiSite(2).then(res => {
+      if (res.code === 200) {
+        let settings = res.data.value;
+        console.log(settings);
+        localStorage.setItem('fonts', JSON.stringify(settings.fonts));
+        this.loadFont(
+          localStorage.getItem('fontFamilyName') || settings.fonts[2].name
+        );
+      }
+    });
   },
   methods: {
     handleKeydown(e) {
@@ -94,6 +105,27 @@ export default {
         e.preventDefault();
         this.player.playOrPause();
       }
+    },
+    loadFont(fontFamily) {
+      fontFamily = this.$store.state.fonts.find(
+        font => font.name === fontFamily
+      );
+      const fontUrl = fontFamily?.href;
+      if (!fontUrl) return;
+
+      // 使用 media="print" 技巧避免阻塞渲染，加载完成后切换为 all
+      const fontLink = document.createElement('link');
+      fontLink.setAttribute('rel', 'stylesheet');
+      fontLink.setAttribute('href', fontUrl);
+      fontLink.setAttribute('media', 'print');
+      fontLink.onload = function () {
+        this.media = 'all';
+      };
+      document.head.appendChild(fontLink);
+      document.documentElement.style.setProperty(
+        '--globalFont',
+        fontFamily?.import
+      );
     },
     fetchData() {
       if (!isLooseLoggedIn()) return;
@@ -115,12 +147,16 @@ export default {
 </script>
 
 <style lang="scss">
+:root {
+  --globalFont: '';
+}
 html,
 body,
 #app {
   position: fixed;
   width: 100%;
   height: 100%;
+  font-family: var(--globalFont);
 }
 * {
   padding: 0;

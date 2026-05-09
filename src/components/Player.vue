@@ -73,6 +73,11 @@
             @click.native="Download"
             ><svg-icon icon-class="download"
           /></button-icon>
+          <button-icon
+            style="display: inline-block; vertical-align: middle"
+            @click.native="player.loadLocalMusic()"
+            ><svg-icon icon-class="upload"
+          /></button-icon>
         </div>
         <div class="blank"></div>
       </div>
@@ -221,6 +226,13 @@ export default {
         : '';
     },
   },
+  mounted() {
+    this.setupMediaControls();
+    window.addEventListener('keydown', this.handleKeydown);
+  },
+  beforeDestroy() {
+    window.removeEventListener('keydown', this.handleKeydown);
+  },
   methods: {
     ...mapMutations(['toggleLyrics']),
     ...mapActions(['showToast', 'likeATrack']),
@@ -252,33 +264,23 @@ export default {
     hasList() {
       return hasListSource();
     },
+    /* eslint-disable */
     Download() {
-      /* eslint-disable */
-      let that = this;
-      let xhr = new XMLHttpRequest();
-      let newMp3Url = this.player.nowMp3Url.split(':')[1];
-      xhr.open('GET', newMp3Url, true);
-      xhr.responseType = 'blob';
-      xhr.onload = function () {
-        if (xhr.status === 200) {
-          if (window.navigator.msSaveOrOpenBlob) {
-            navigator.msSaveBlob(xhr.response, that.currentTrack.name);
-          } else {
-            let link = document.createElement('a');
-            let body = document.querySelector('body');
-            link.href = window.URL.createObjectURL(xhr.response);
-            link.download =
-              that.currentTrack.name + '-' + that.currentTrack.ar[0].name;
-            // fix Firefox
-            link.style.display = 'none';
-            body.appendChild(link);
-            link.click();
-            body.removeChild(link);
-            window.URL.revokeObjectURL(link.href);
-          }
-        }
-      };
-      xhr.send();
+      const { name, ar } = this.currentTrack;
+      const newMp3Url = this.player.nowMp3Url.split(':')[1];
+      fetch(newMp3Url)
+        .then(response => response.blob())
+        .then(blob => {
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = `${name}-${ar[0].name}`;
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(link.href);
+        })
+        .catch(() => window.open(newMp3Url, '_blank'));
     },
     goToList() {
       goToListSource();
@@ -304,6 +306,39 @@ export default {
     },
     mute() {
       this.player.mute();
+    },
+
+    setupMediaControls() {
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('play', () => {
+          this.playOrPause();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          this.playOrPause();
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          this.playPrevTrack();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          this.playNextTrack();
+        });
+      }
+    },
+
+    handleKeydown(event) {
+      switch (event.code) {
+        case 'MediaPlayPause':
+          this.playOrPause();
+          break;
+        case 'MediaTrackPrevious':
+          this.playPrevTrack();
+          break;
+        case 'MediaTrackNext':
+          this.playNextTrack();
+          break;
+        default:
+          break;
+      }
     },
   },
 };

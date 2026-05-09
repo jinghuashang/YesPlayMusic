@@ -7,17 +7,22 @@ function resolve(dir) {
 module.exports = {
   // 生产环境打包不输出 map
   productionSourceMap: false,
+  // 配置publicPath，生产环境指向COS地址
+  publicPath:
+    process.env.NODE_ENV === 'production'
+      ? 'https://cos.roginx.ink/www/music/dist/'
+      : '/',
   devServer: {
     disableHostCheck: true,
     port: process.env.DEV_SERVER_PORT || 8080,
     proxy: {
-      '^/api': {
-        // target:'http://47.113.184.243:3000/',
-        target: 'https://service-2yza8qsi-1257251314.gz.apigw.tencentcs.com/',
+      '/api': {
+        target: 'https://music.roginx.ink/api',
+        // target: 'https://service-2yza8qsi-1257251314.gz.apigw.tencentcs.com/',
         // target:'http://127.0.0.1:3000/',
         changeOrigin: true,
         pathRewrite: {
-          '^/api': '/',
+          '/api': '',
         },
       },
     },
@@ -63,6 +68,16 @@ module.exports = {
       .test(/\.node$/)
       .use('node-loader')
       .loader('node-loader')
+      .end();
+
+    config.module
+      .rule('webpack4_es_fallback')
+      .test(/\.js$/)
+      .include.add(/node_modules/)
+      .end()
+      .use('esbuild-loader')
+      .loader('esbuild-loader')
+      .options({ target: 'es2015', format: 'cjs' })
       .end();
 
     // LimitChunkCountPlugin 可以通过合并块来对块进行后期处理。用以解决 chunk 包太多的问题
@@ -171,6 +186,16 @@ module.exports = {
           'jsbi',
           path.join(__dirname, 'node_modules/jsbi/dist/jsbi-cjs.js')
         );
+
+        config.module
+          .rule('webpack4_es_fallback')
+          .test(/\.js$/)
+          .include.add(/node_modules/)
+          .end()
+          .use('esbuild-loader')
+          .loader('esbuild-loader')
+          .options({ target: 'es2015', format: 'cjs' })
+          .end();
       },
       // 渲染线程的配置文件
       chainWebpackRendererProcess: config => {

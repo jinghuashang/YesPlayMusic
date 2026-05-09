@@ -24,6 +24,13 @@
           :style="{ backgroundImage: `url(${bgImageUrl})` }"
         />
       </div>
+      <img
+        v-if="settings.lyricsBackground === true"
+        class="gradient-background slight-move"
+        :style="{ background }"
+        :src="imageUrl"
+      />
+      <Visualization ref="visualization" :option="{}"></Visualization>
       <div
         v-if="settings.lyricsBackground === true"
         class="gradient-background"
@@ -41,11 +48,9 @@
                   :src="imageUrl"
                   loading="lazy"
                   onerror="this.src='https://p2.music.126.net/UeTuwE7pvjBpypWLudqukA==/3132508627578625.jpg'; this.onerror=null;"
+                  @contextmenu="changeCover"
                 />
-                <div
-                  class="shadow"
-                  :style="{ backgroundImage: `url(${imageUrl})` }"
-                ></div>
+                <img class="shadow" :src="imageUrl" />
               </div>
             </div>
             <div class="controls">
@@ -211,11 +216,70 @@
                 >
                   <svg-icon icon-class="shuffle" />
                 </button-icon>
+                <button-icon
+                  v-show="
+                    isShowLyricTypeSwitch &&
+                    $store.state.settings.showLyricsTranslation &&
+                    lyricType === 'translation'
+                  "
+                  :title="$t('player.translationLyric')"
+                  @click.native="switchLyricType"
+                >
+                  <span class="lyric-switch-icon">译</span>
+                </button-icon>
+                <button-icon
+                  v-show="
+                    isShowLyricTypeSwitch &&
+                    $store.state.settings.showLyricsTranslation &&
+                    lyricType === 'romaPronunciation'
+                  "
+                  :title="$t('player.PronunciationLyric')"
+                  @click.native="switchLyricType"
+                >
+                  <span class="lyric-switch-icon">音</span>
+                </button-icon>
               </div>
             </div>
           </div>
         </div>
-        <div class="right-side">
+        <div class="highlight-lyric">
+          <div
+            v-if="lyricWithTranslation[highlightLyricIndex]"
+            :key="lyricWithTranslation[highlightLyricIndex].contents[0]"
+            class="highlight-lyric-line"
+          >
+            <span
+              v-for="(a, index) in lyricWithTranslation[highlightLyricIndex]
+                .contents[0]"
+              :key="index"
+              class="highlight-lyric-line-char"
+              :char-index="index"
+              :style="{ 'animation-delay': index * 0.02 + 's' }"
+              >{{ a }}</span
+            >
+          </div>
+          <div
+            v-if="lyricWithTranslation[highlightLyricIndex]"
+            :key="lyricWithTranslation[highlightLyricIndex].contents[1]"
+            class="highlight-lyric-line"
+          >
+            <span
+              v-for="(a, index) in lyricWithTranslation[highlightLyricIndex]
+                .contents[1]"
+              :key="index"
+              class="highlight-lyric-line-char"
+              :style="{ 'animation-delay': index * 0.02 + 's' }"
+              :char-index="index"
+              >{{ a }}</span
+            >
+          </div>
+        </div>
+        <div
+          class="right-side"
+          :style="{
+            transform: `perspective(${$store.state.visualSet.perspective}px) rotateY(${$store.state.visualSet.rotateY}deg)`,
+          }"
+        >
           <transition name="slide-fade">
             <div
               v-show="!noLyric"
@@ -225,7 +289,7 @@
             >
               <div id="line-1" class="line"></div>
               <div
-                v-for="(line, index) in lyricWithTranslation"
+                v-for="(line, index) in lyricToShow"
                 :id="`line${index}`"
                 :key="index"
                 class="line"
@@ -236,7 +300,11 @@
                 @dblclick="clickLyricLine(line.time, true)"
               >
                 <div class="content">
-                  <span v-if="line.contents[0]">{{ line.contents[0] }}</span>
+                  <span
+                    v-if="line.contents[0]"
+                    @click.right="openLyricMenu($event, line, 0)"
+                    >{{ line.contents[0] }}</span
+                  >
                   <br />
                   <span
                     v-if="
@@ -244,10 +312,26 @@
                       $store.state.settings.showLyricsTranslation
                     "
                     class="translation"
+                    @click.right="openLyricMenu($event, line, 1)"
                     >{{ line.contents[1] }}</span
                   >
                 </div>
               </div>
+              <ContextMenu v-if="!noLyric" ref="lyricMenu">
+                <div class="item" @click="copyLyric(false)">{{
+                  $t('contextMenu.copyLyric')
+                }}</div>
+                <div
+                  v-if="
+                    rightClickLyric &&
+                    rightClickLyric.contents[1] &&
+                    $store.state.settings.showLyricsTranslation
+                  "
+                  class="item"
+                  @click="copyLyric(true)"
+                  >{{ $t('contextMenu.copyLyricWithTranslation') }}</div
+                >
+              </ContextMenu>
             </div>
           </transition>
         </div>
@@ -257,6 +341,12 @@
           <svg-icon icon-class="arrow-down" />
         </button>
       </div>
+      <div class="close-button" style="left: 24px" @click="fullscreen">
+        <button>
+          <svg-icon v-if="isFullscreen" icon-class="fullscreen-exit" />
+          <svg-icon v-else icon-class="fullscreen" />
+        </button>
+      </div>
     </div>
   </transition>
 </template>
@@ -264,34 +354,43 @@
 <script>
 // The lyrics page of Apple Music is so gorgeous, so I copy the design.
 // Some of the codes are from https://github.com/sl1673495/vue-netease-music
+/* eslint-disable */
 
 import { mapState, mapMutations, mapActions } from 'vuex';
 import VueSlider from 'vue-slider-component';
+import ContextMenu from '@/components/ContextMenu.vue';
 import { formatTrackTime } from '@/utils/common';
 import { getLyric } from '@/api/track';
-import { lyricParser } from '@/utils/lyrics';
+import { lyricParser, copyLyric } from '@/utils/lyrics';
 import ButtonIcon from '@/components/ButtonIcon.vue';
+import Visualization from '@/components/Visualization';
 import * as Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
 import Color from 'color';
 import { isAccountLoggedIn } from '@/utils/auth';
 import { hasListSource, getListSourcePath } from '@/utils/playList';
 import locale from '@/locale';
-
 export default {
   name: 'Lyrics',
   components: {
     VueSlider,
     ButtonIcon,
+    Visualization,
+    ContextMenu,
   },
   data() {
     return {
       lyricsInterval: null,
       lyric: [],
       tlyric: [],
+      romalyric: [],
+      lyricType: 'translation', // or 'romaPronunciation'
       highlightLyricIndex: -1,
       minimize: true,
+      resetImageUrl: false,
       background: '',
       date: this.formatTime(new Date()),
+      isFullscreen: !!document.fullscreenElement,
+      rightClickLyric: null,
     };
   },
   computed: {
@@ -308,10 +407,21 @@ export default {
       },
     },
     imageUrl() {
+      if (this.resetImageUrl) {
+        return this.resetImageUrl;
+      }
       return this.player.currentTrack?.al?.picUrl + '?param=1024y1024';
     },
     bgImageUrl() {
       return this.player.currentTrack?.al?.picUrl + '?param=512y512';
+    },
+    isShowLyricTypeSwitch() {
+      return this.romalyric.length > 0 && this.tlyric.length > 0;
+    },
+    lyricToShow() {
+      return this.lyricType === 'translation'
+        ? this.lyricWithTranslation
+        : this.lyricWithRomaPronunciation;
     },
     lyricWithTranslation() {
       let ret = [];
@@ -331,6 +441,37 @@ export default {
             const { content: tLyricContent } = sameTimeTLyric;
             if (content) {
               lyricItem.contents.push(tLyricContent);
+            }
+          }
+          ret.push(lyricItem);
+        });
+      } else {
+        ret = lyricFiltered.map(({ time, content }) => ({
+          time,
+          content,
+          contents: [content],
+        }));
+      }
+      return ret;
+    },
+    lyricWithRomaPronunciation() {
+      let ret = [];
+      // 空内容的去除
+      const lyricFiltered = this.lyric.filter(({ content }) =>
+        Boolean(content)
+      );
+      // content统一转换数组形式
+      if (lyricFiltered.length) {
+        lyricFiltered.forEach(l => {
+          const { rawTime, time, content } = l;
+          const lyricItem = { time, content, contents: [content] };
+          const sameTimeRomaLyric = this.romalyric.find(
+            ({ rawTime: tLyricRawTime }) => tLyricRawTime === rawTime
+          );
+          if (sameTimeRomaLyric) {
+            const { content: romaLyricContent } = sameTimeRomaLyric;
+            if (content) {
+              lyricItem.contents.push(romaLyricContent);
             }
           }
           ret.push(lyricItem);
@@ -388,6 +529,9 @@ export default {
     this.getCoverColor();
     this.initDate();
   },
+  beforeDestroy() {
+    clearInterval(this.lyricsInterval);
+  },
   beforeDestroy: function () {
     if (this.timer) {
       clearInterval(this.timer);
@@ -399,6 +543,21 @@ export default {
   methods: {
     ...mapMutations(['toggleLyrics', 'updateModal']),
     ...mapActions(['likeATrack']),
+    async changeCover() {
+      const pastedText = await navigator.clipboard.readText();
+      const isLink = text => {
+        try {
+          return !!new URL(text);
+        } catch (error) {
+          return false;
+        }
+      };
+      if (!isLink(pastedText)) {
+        return;
+      }
+      this.resetImageUrl = pastedText;
+      this.getCoverColor();
+    },
     initDate() {
       var _this = this;
       clearInterval(this.timer);
@@ -417,6 +576,13 @@ export default {
         ':' +
         second.padStart(2, '0')
       );
+    },
+    fullscreen() {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen();
+      }
     },
     addToPlaylist() {
       if (!isAccountLoggedIn()) {
@@ -442,6 +608,7 @@ export default {
       this.player.playOrPause();
     },
     playNextTrack() {
+      this.resetImageUrl = false;
       if (this.player.isPersonalFM) {
         this.player.playNextFMTrack();
       } else {
@@ -453,9 +620,10 @@ export default {
         if (!data?.lrc?.lyric) {
           this.lyric = [];
           this.tlyric = [];
+          this.romalyric = [];
           return false;
         } else {
-          let { lyric, tlyric } = lyricParser(data);
+          let { lyric, tlyric, romalyric } = lyricParser(data);
           lyric = lyric.filter(
             l => !/^作(词|曲)\s*(:|：)\s*无$/.exec(l.content)
           );
@@ -475,14 +643,26 @@ export default {
           if (lyric.length === 1 && includeAM) {
             this.lyric = [];
             this.tlyric = [];
+            this.romalyric = [];
             return false;
           } else {
             this.lyric = lyric;
             this.tlyric = tlyric;
+            this.romalyric = romalyric;
+            if (tlyric.length * romalyric.length > 0) {
+              this.lyricType = 'translation';
+            } else {
+              this.lyricType =
+                lyric.length > 0 ? 'translation' : 'romaPronunciation';
+            }
             return true;
           }
         }
       });
+    },
+    switchLyricType() {
+      this.lyricType =
+        this.lyricType === 'translation' ? 'romaPronunciation' : 'translation';
     },
     formatTrackTime(value) {
       return formatTrackTime(value);
@@ -502,9 +682,24 @@ export default {
         this.player.play();
       }
     },
+    openLyricMenu(e, lyric, idx) {
+      this.rightClickLyric = { ...lyric, idx };
+      this.$refs.lyricMenu.openMenu(e);
+      e.preventDefault();
+    },
+    copyLyric(withTranslation) {
+      if (this.rightClickLyric) {
+        const idx = this.rightClickLyric.idx;
+        if (!withTranslation) {
+          copyLyric(this.rightClickLyric.contents[idx]);
+        } else {
+          copyLyric(this.rightClickLyric.contents.join(' '));
+        }
+      }
+    },
     setLyricsInterval() {
       this.lyricsInterval = setInterval(() => {
-        const progress = this.player.seek() ?? 0;
+        const progress = this.player.seek(null, false) ?? 0;
         let oldHighlightLyricIndex = this.highlightLyricIndex;
         this.highlightLyricIndex = this.lyric.findIndex((l, index) => {
           const nextLyric = this.lyric[index + 1];
@@ -533,13 +728,18 @@ export default {
     },
     getCoverColor() {
       if (this.settings.lyricsBackground !== true) return;
-      const cover = this.currentTrack.al?.picUrl + '?param=256y256';
+      const cover = this.imageUrl + '?param=256y256';
       Vibrant.from(cover, { colorCount: 1 })
         .getPalette()
         .then(palette => {
           const originColor = Color.rgb(palette.DarkMuted._rgb);
-          const color = originColor.darken(0.1).rgb().string();
-          const color2 = originColor.lighten(0.28).rotate(-30).rgb().string();
+          const color = originColor.darken(0.1).rgb().fade(0.28).string();
+          const color2 = originColor
+            .lighten(0.28)
+            .rotate(-30)
+            .rgb()
+            .fade(0.4)
+            .string();
           this.background = `linear-gradient(to top left, ${color}, ${color2})`;
         });
     },
@@ -557,6 +757,49 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+.highlight-lyric-line-char {
+  opacity: 0;
+  animation-name: bounce-in;
+  animation-duration: 0.5s;
+  animation-fill-mode: forwards;
+}
+
+@keyframes bounce-in {
+  0% {
+    font-weight: 100;
+    opacity: 0;
+    // transform: translateX(100%) scale(0.2);
+  }
+  80% {
+    opacity: 0.8;
+    font-weight: 500;
+    // transform: translateY(0) scale(1.5);
+  }
+  100% {
+    font-weight: normal;
+    opacity: 1;
+    // transform: translateY(0) scale(1);
+  }
+}
+.highlight-lyric {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  color: #fff;
+  font-size: 20px;
+  bottom: 20px;
+  user-select: none;
+  white-space: pre;
+  left: 0;
+  width: 100vw;
+}
+.highlight-lyric .highlight-lyric-line {
+  justify-content: center;
+  width: 100%;
+  line-height: 36px height：36px;
+  display: flex;
+  flex-direction: row;
+}
 .lyrics-page {
   position: fixed;
   top: 0;
@@ -625,19 +868,47 @@ export default {
     transform: rotate(360deg);
   }
 }
-
+@keyframes slight-move {
+  0% {
+    transform: scale(1);
+    transform-origin: center;
+  }
+  25% {
+    transform: scale(1.2) translate(-8%, -8%);
+    transform-origin: center;
+  }
+  50% {
+    transform: scale(1.3) translate(0, 0);
+    transform-origin: center;
+  }
+  75% {
+    transform: scale(1.4) translate(8%, 8%);
+    transform-origin: center;
+  }
+  100% {
+    transform: scale(1);
+    transform-origin: center;
+  }
+}
+.slight-move {
+  animation: slight-move 25s infinite;
+}
 .gradient-background {
   position: absolute;
   height: 100vh;
-  width: 100%;
+  width: 100vw;
+  object-fit: cover;
+  background-size: cover !important;
+  background-position: center !important;
+  filter: blur(6px);
+  margin: 0;
 }
 
 .left-side {
   flex: 1;
   display: flex;
   justify-content: flex-end;
-  margin-right: 40px;
-  margin-top: 24px;
+  margin: 80px 0;
   align-items: center;
   transition: all 0.5s;
 
@@ -776,6 +1047,12 @@ export default {
           width: 22px;
         }
       }
+      .lyric-switch-icon {
+        color: var(--color-text);
+        font-size: 14px;
+        line-height: 14px;
+        opacity: 0.88;
+      }
     }
   }
 }
@@ -797,10 +1074,11 @@ export default {
 
   .shadow {
     position: absolute;
-    top: 12px;
-    height: 54vh;
-    width: 54vh;
-    filter: blur(16px) opacity(0.6);
+    top: 0;
+    height: 105%;
+    left: 0;
+    width: 105%;
+    filter: blur(14px) opacity(0.8);
     transform: scale(0.92, 0.96);
     z-index: -1;
     background-size: cover;
@@ -809,6 +1087,7 @@ export default {
 }
 
 .right-side {
+  margin: 80px 0;
   flex: 1;
   font-weight: 600;
   color: var(--color-text);
@@ -830,7 +1109,7 @@ export default {
       padding: 12px 18px;
       transition: 0.5s;
       border-radius: 12px;
-
+      text-align: center;
       &:hover {
         background: var(--color-secondary-bg-for-transparent);
       }
@@ -839,6 +1118,7 @@ export default {
         transform-origin: center left;
         transform: scale(0.95);
         transition: all 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        user-select: none;
 
         span {
           opacity: 0.28;
@@ -929,12 +1209,25 @@ export default {
   }
 }
 @media screen and (max-width: 576px) {
+  .gradient-background {
+    filter: blur(5px);
+  }
+  .main-container {
+    display: flex;
+    margin: 30px auto;
+    flex-direction: column;
+    align-items: center;
+  }
+  .highlight-lyric {
+    display: none;
+  }
   .lyrics-container .line .content {
     transform-origin: center !important;
     font-size: 0.8em;
   }
   .left-side {
-    display: none;
+    flex: 4;
+    margin: 0;
   }
   .right-side .lyrics-container {
     text-align: center;
@@ -943,8 +1236,23 @@ export default {
     font-size: 0.8;
     width: 100%;
   }
+  .cover {
+    img {
+      width: 80vw;
+      height: 80vw;
+    }
+  }
+  .left-side .controls {
+    width: 80vw;
+  }
   .right-side {
+    height: 120px;
     margin: 0;
+    .lyrics-container {
+      .line {
+        padding: 5px 18px;
+      }
+    }
   }
 }
 .slide-up-enter-active,

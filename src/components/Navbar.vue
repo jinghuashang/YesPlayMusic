@@ -84,6 +84,10 @@
         <svg-icon icon-class="github" />
         {{ $t('nav.github') }}
       </div>
+      <div class="item" @click="toIndex">
+        <svg-icon icon-class="index" />
+        {{ $t('nav.index') }}
+      </div>
     </ContextMenu>
   </div>
 </template>
@@ -190,7 +194,10 @@ export default {
       }
     },
     toGitHub() {
-      window.open('https://github.com/qier222/YesPlayMusic');
+      window.open('https://github.com/janxland/YesPlayMusic');
+    },
+    toIndex() {
+      window.open('https://www.roginx.ink');
     },
     toLogin() {
       if (process.env.IS_ELECTRON === true) {
@@ -225,6 +232,12 @@ nav {
 
   background-color: var(--color-navbar-bg);
   -webkit-app-region: drag;
+}
+
+@media (max-width: 1336px) {
+  nav {
+    padding: 0 max(5vw, 90px);
+  }
 }
 
 @supports (-moz-appearance: none) {
