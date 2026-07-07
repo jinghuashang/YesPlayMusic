@@ -21,7 +21,7 @@ let localStorage = {
     automaticallyCacheSongs: true,
     cacheLimit: 8192,
     enableReversedMode: false,
-    nyancatStyle: true,
+    nyancatStyle: false,
     showLyricsTranslation: true,
     lyricsBackground: true,
     enableOsdlyricsSupport: false,
@@ -31,6 +31,7 @@ let localStorage = {
     showLibraryDefault: false,
     subTitleDefault: false,
     linuxEnableCustomTitlebar: false,
+    trayIconTheme: 'auto',
     enabledPlaylistCategories,
     proxyConfig: {
       protocol: 'noProxy',

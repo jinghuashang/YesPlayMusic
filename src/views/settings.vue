@@ -3,7 +3,13 @@
     <div class="container">
       <div v-if="showUserInfo" class="user">
         <div class="left">
-          <img class="avatar" :src="data.user.avatarUrl" loading="lazy" />
+          <img
+            class="avatar"
+            :src="data.user.avatarUrl"
+            referrerpolicy="no-referrer"
+            onerror="if(!this.dataset.fallback){this.dataset.fallback=1;this.src=window.__YPM_COVER_FALLBACK__}else{this.onerror=null}"
+            loading="lazy"
+          />
           <div class="info">
             <div class="nickname">{{ data.user.nickname }}</div>
             <div class="extra-info">
@@ -53,6 +59,18 @@
             <option value="dark"
               >🌚 {{ $t('settings.appearance.dark') }}</option
             >
+          </select>
+        </div>
+      </div>
+      <div v-if="isElectron" class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.trayIcon.text') }} </div>
+        </div>
+        <div class="right">
+          <select v-model="trayIconTheme">
+            <option value="auto">{{ $t('settings.trayIcon.auto') }}</option>
+            <option value="light">{{ $t('settings.trayIcon.light') }}</option>
+            <option value="dark">{{ $t('settings.trayIcon.dark') }}</option>
           </select>
         </div>
       </div>
@@ -937,6 +955,21 @@ export default {
         localStorage.setItem('fontFamilyName', value);
         this.$store.commit('changefontFamilyName', value);
         this.clearCache();
+      },
+    },
+    trayIconTheme: {
+      get() {
+        if (this.settings.trayIconTheme === undefined) return 'auto';
+        return this.settings.trayIconTheme;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'trayIconTheme',
+          value,
+        });
+        if (this.isElectron) {
+          ipcRenderer.send('updateTrayIcon', value);
+        }
       },
     },
     musicQuality: {

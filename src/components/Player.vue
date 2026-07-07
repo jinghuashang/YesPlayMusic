@@ -1,5 +1,5 @@
 <template>
-  <div class="player" @click="toggleLyrics">
+  <div class="player" @click="handleClick" @mousedown="handleMouseDown">
     <div
       class="progress-bar"
       :class="{
@@ -28,7 +28,8 @@
           <img
             :src="currentTrack.al && currentTrack.al.picUrl | resizeImage(224)"
             loading="lazy"
-            onerror="this.src = 'https://p2.music.126.net/UeTuwE7pvjBpypWLudqukA==/3132508627578625.jpg'; this.onerror=null;"
+            referrerpolicy="no-referrer"
+            onerror="this.src=window.__YPM_COVER_FALLBACK__;this.onerror=null"
             @click="goToAlbum"
           />
           <div class="track-info" :title="audioSource">
@@ -85,16 +86,9 @@
         <div class="blank"></div>
         <div class="container" @click.stop>
           <button-icon
-            v-show="!player.isPersonalFM"
             :title="$t('player.previous')"
             @click.native="playPrevTrack"
             ><svg-icon icon-class="previous"
-          /></button-icon>
-          <button-icon
-            v-show="player.isPersonalFM"
-            title="不喜欢"
-            @click.native="moveToFMTrash"
-            ><svg-icon icon-class="thumbs-down"
           /></button-icon>
           <button-icon
             class="play"
@@ -204,6 +198,11 @@ export default {
     ButtonIcon,
     VueSlider,
   },
+  data() {
+    return {
+      mouseDownTarget: null,
+    };
+  },
   computed: {
     ...mapState(['player', 'settings', 'data']),
     currentTrack() {
@@ -236,6 +235,14 @@ export default {
   methods: {
     ...mapMutations(['toggleLyrics']),
     ...mapActions(['showToast', 'likeATrack']),
+    handleClick(event) {
+      if (event.target == this.mouseDownTarget) {
+        this.toggleLyrics();
+      }
+    },
+    handleMouseDown(event) {
+      this.mouseDownTarget = event.target;
+    },
     playPrevTrack() {
       this.player.playPrevTrack();
     },

@@ -1,9 +1,17 @@
 <template>
   <div class="fm" :style="{ background }" data-theme="dark">
-    <img :src="nextTrackCover" style="display: none" loading="lazy" />
+    <img
+      :src="nextTrackCover"
+      style="display: none"
+      referrerpolicy="no-referrer"
+      onerror="this.onerror=null"
+      loading="lazy"
+    />
     <img
       class="cover"
       :src="track.album && track.album.picUrl | resizeImage(512)"
+      referrerpolicy="no-referrer"
+      onerror="if(!this.dataset.fallback){this.dataset.fallback=1;this.src=window.__YPM_COVER_FALLBACK__}else{this.onerror=null}"
       loading="lazy"
       @click="goToAlbum"
     />
@@ -14,8 +22,11 @@
       </div>
       <div class="controls">
         <div class="buttons">
-          <button-icon title="不喜欢" @click.native="moveToFMTrash">
-            <svg-icon id="thumbs-down" icon-class="thumbs-down" />
+          <button-icon
+            :title="$t('player.previous')"
+            @click.native="playPrevTrack"
+          >
+            <svg-icon icon-class="previous" />
           </button-icon>
           <button-icon
             :title="$t(isPlaying ? 'player.pause' : 'player.play')"
@@ -82,6 +93,9 @@ export default {
     },
     next() {
       this.player.playNextFMTrack();
+    },
+    playPrevTrack() {
+      this.player.playPrevTrack();
     },
     goToAlbum() {
       if (this.track.album.id === 0) return;
