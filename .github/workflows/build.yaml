@@ -1,8 +1,11 @@
 name: Release
 
 env:
-  NODE_OPTIONS: --openssl-legacy-provider
-  PNPM_ADD_NOPT: pnpm add --no-save --no-optional
+  # UNM 依赖是平台原生包（rust-napi-*），CI 用 --no-save 临时装不污染 pnpm-lock：
+  # pnpm 9 不再支持 --no-save（ERR_PNPM_OPTION_NOT_SUPPORTED），改用 npm install --no-save；
+  # --legacy-peer-deps：npm 解析全依赖树时撞上项目原有的 eslint 6 vs eslint-config-prettier 8 peer 冲突
+  # --no-package-lock：避免 npm 读写遗留的 package-lock.json（pnpm 项目不该有它）
+  PNPM_ADD_NOPT: npm install --no-save --no-optional --legacy-peer-deps --no-package-lock
 
 on:
   push:
@@ -20,23 +23,26 @@ jobs:
 
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-22.04]
+        # macos-13 = Intel x64 runner：Electron 13 无 darwin-arm64 构建，必须在 x64 环境安装/打包
+        # （macos-latest 是 arm64，会因下载 darwin-arm64 zip 失败而报 "解压完成但未找到 electron 可执行文件"）
+        os: [macos-13, windows-latest, ubuntu-22.04]
 
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: 'recursive'
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        uses: pnpm/action-setup@v5
+        # 不指定 version：自动读取 package.json 的 packageManager 字段（pnpm@9.15.9），
+        # 避免与 pnpm/action-setup 的 version 参数冲突（ERR_PNPM_BAD_PM_VERSION）
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 16
+          # Node 18 LTS：pnpm 9 要求 >=18.12，且 --openssl-legacy-provider 仍可用
+          node-version: 18
           cache: 'pnpm'
 
       - name: Install RPM & Pacman (on Ubuntu)
@@ -69,24 +75,25 @@ jobs:
       - name: Install UNM dependencies for macOS
         if: runner.os == 'macOS'
         run: |
+          # macos-13 是 Intel x64 runner：只装 darwin-x64（darwin-arm64 会触发 npm EBADPLATFORM，且 Electron 13 无 arm64）
           ${{ env.PNPM_ADD_NOPT }} \
             @unblockneteasemusic/rust-napi-darwin-x64@${{ steps.get_unm_version.outputs.unmver }} \
-            @unblockneteasemusic/rust-napi-darwin-arm64@${{ steps.get_unm_version.outputs.unmver }} \
             dmg-license
         shell: bash
 
       - name: Install UNM dependencies for Linux
         if: runner.os == 'Linux'
         run: |
+          # ubuntu-22.04 是 x64 runner：只装 linux-x64-gnu（arm64/arm 包在 x64 上 npm EBADPLATFORM 拒绝）
           ${{ env.PNPM_ADD_NOPT }} \
-            @unblockneteasemusic/rust-napi-linux-x64-gnu@${{ steps.get_unm_version.outputs.unmver }} \
-            @unblockneteasemusic/rust-napi-linux-arm64-gnu@${{ steps.get_unm_version.outputs.unmver }} \
-            @unblockneteasemusic/rust-napi-linux-arm-gnueabihf@${{ steps.get_unm_version.outputs.unmver }}
+            @unblockneteasemusic/rust-napi-linux-x64-gnu@${{ steps.get_unm_version.outputs.unmver }}
         shell: bash
 
       - name: Build/release Electron app
         uses: samuelmeuli/action-electron-builder@v1.6.0
         env:
+          # vue-cli/webpack4 构建需要 legacy provider（仅此步骤，Node 16 支持该 flag）
+          NODE_OPTIONS: --openssl-legacy-provider
           VUE_APP_NETEASE_API_URL: /api
           VUE_APP_ELECTRON_API_URL: /api
           VUE_APP_ELECTRON_API_URL_DEV: http://127.0.0.1:10754
